@@ -1,10 +1,10 @@
-#include <common\IDebugLog.h>
+﻿#include <common\IDebugLog.h>
 #include <skse64_common\skse_version.h>
 #include <skse64\GameInput.h>
 #include <skse64\GameRTTI.h>
 #include <skse64\PluginAPI.h>
 #include <ShlObj.h>
-#include <skse64/GameMenus.h>
+#include <skse64\GameMenus.h>
 #include <array>
 #include <unordered_map>
 #include "ImmersiveImpact/INILibrary/SimpleIni.h"
@@ -23,21 +23,11 @@ InputManager* im;
 IMenu* console;
 CSimpleIniA ini(true, false, false);
 int paKey = 257;
-int altKey = 34;
-int forceKeyCombination = -1;
-int forceLeftKey = 999;
-int forceRightKey = 999;
-int forceDualKey = 999;
-bool keyComboPressed = true;
+int modifierKey = -1;
+bool keyComboPressed = false;
 bool onlyDuringAttacks = false;
-bool skysaCompatibility = false;
-std::string rightHand = "player.pa ActionRightPowerAttack";
-std::string leftHand = "player.pa ActionLeftPowerAttack";
-std::string dualWield = "player.pa ActionDualPowerAttack";
-std::string skysaCommandL = "player.playidle LeftHandPowerAttackForward";
-std::string skysaCommandR = "player.playidle PowerAttackForward";
-std::string skysaCommandLStanding = "player.playidle LeftHandPowerAttack";
-std::string skysaCommandRStanding = "player.playidle PowerAttackStanding";
+bool disableLongPress = false;
+std::string powerAttack = "player.pa ActionRightPowerAttack";
 bool isAttacking = false;
 
 /*RelocAddr<uintptr_t> AttackStopHandler_vtable(0x1671F30);
@@ -59,7 +49,7 @@ class HookAttackBlockHandler {
 public:
 	typedef void (HookAttackBlockHandler::* FnProcessButton) (ButtonEvent*, void*);
 	void ProcessButton(ButtonEvent* a_event, void* a_data) {
-		if (onlyDuringAttacks && isAttacking) {
+		if (onlyDuringAttacks && (keyComboPressed ||isAttacking) ) {
 			UInt32	keyCode;
 			UInt32	deviceType = a_event->deviceType;
 			UInt32	keyMask = a_event->keyMask;
@@ -76,8 +66,12 @@ public:
 
 			float timer = a_event->timer;
 			bool isDown = a_event->flags != 0 && timer == 0.0;
+			bool isHeld = a_event->flags != 0 && timer > 0.5;
 
 			if (isDown && keyCode == paKey) {
+				return;
+			}
+			if (disableLongPress && isHeld && keyCode == 256) {
 				return;
 			}
 		}
@@ -151,7 +145,7 @@ public:
 
 class HookAnimGraphEvent {
 public:
-	typedef EventResult (HookAnimGraphEvent::* FnReceiveEvent)(BSAnimationGraphEvent* evn, EventDispatcher<BSAnimationGraphEvent>* dispatcher);
+	typedef EventResult(HookAnimGraphEvent::* FnReceiveEvent)(BSAnimationGraphEvent* evn, EventDispatcher<BSAnimationGraphEvent>* dispatcher);
 
 	EventResult ReceiveEventHook(BSAnimationGraphEvent* evn, EventDispatcher<BSAnimationGraphEvent>* src) {
 		Actor* a = *(Actor**)((uintptr_t)evn + 0x8);
@@ -195,39 +189,8 @@ void SendConsoleCommand(std::string s) {
 	console->view->Invoke("gfx.io.GameDelegate.call", &res, args.data(), args.size());
 }
 
-void LeftHandPowerAttack() {
-	if (!skysaCompatibility) {
-		SendConsoleCommand(leftHand);
-	}
-	else {
-		SendConsoleCommand(skysaCommandL);
-		SendConsoleCommand(skysaCommandLStanding);
-	}
-}
-
-void DualWieldPowerAttack() {
-	if (!skysaCompatibility) {
-		SendConsoleCommand(dualWield);
-	}
-	else {
-		if (!isAttacking) {
-			SendConsoleCommand(dualWield);
-		}
-		else {
-			SendConsoleCommand(skysaCommandR);
-			SendConsoleCommand(skysaCommandRStanding);
-		}
-	}
-}
-
-void RightHandPowerAttack() {
-	if (!skysaCompatibility) {
-		SendConsoleCommand(rightHand);
-	}
-	else {
-		SendConsoleCommand(skysaCommandR);
-		SendConsoleCommand(skysaCommandRStanding);
-	}
+void PowerAttack() {
+	SendConsoleCommand(powerAttack);
 }
 
 enum USER_EVENT_FLAG {
@@ -302,84 +265,55 @@ public:
 			return kEvent_Continue;
 		}
 
-		UInt64 wepL = *(UInt64*)((uintptr_t)p->processManager->middleProcess + 0x220);
-		UInt64 wepR = *(UInt64*)((uintptr_t)p->processManager->middleProcess + 0x260);
-		UInt64 wepLR = *(UInt64*)((uintptr_t)p->processManager->middleProcess + 0x268);
-
-		if (wepLR && ((*(TESObjectWEAP**)wepLR)->type() == TESObjectWEAP::GameData::kType_Bow || (*(TESObjectWEAP**)wepLR)->type() == TESObjectWEAP::GameData::kType_CrossBow || (*(TESObjectWEAP**)wepLR)->type() == TESObjectWEAP::GameData::kType_Staff)) {
-			return kEvent_Continue;
-		}
-		SpellItem* magicL = p->leftHandSpell;
-		SpellItem* magicR = p->rightHandSpell;
 		for (InputEvent* e = *evns; e; e = e->next) {
 			switch (e->eventType) {
-				case InputEvent::kEventType_Button:
-				{
-					ButtonEvent* t = DYNAMIC_CAST(e, InputEvent, ButtonEvent);
+			case InputEvent::kEventType_Button:
+			{
+				ButtonEvent* t = DYNAMIC_CAST(e, InputEvent, ButtonEvent);
 
 
-					UInt32	keyCode;
-					UInt32	deviceType = t->deviceType;
-					UInt32	keyMask = t->keyMask;
+				UInt32	keyCode;
+				UInt32	deviceType = t->deviceType;
+				UInt32	keyMask = t->keyMask;
 
-					// Mouse
-					if (deviceType == kDeviceType_Mouse)
-						keyCode = InputMap::kMacro_MouseButtonOffset + keyMask;
-					// Gamepad
-					else if (deviceType == kDeviceType_Gamepad)
-						keyCode = InputMap::GamepadMaskToKeycode(keyMask);
-					// Keyboard
-					else
-						keyCode = keyMask;
+				// Mouse
+				if (deviceType == kDeviceType_Mouse)
+					keyCode = InputMap::kMacro_MouseButtonOffset + keyMask;
+				// Gamepad
+				else if (deviceType == kDeviceType_Gamepad)
+					keyCode = InputMap::GamepadMaskToKeycode(keyMask);
+				// Keyboard
+				else
+					keyCode = keyMask;
 
-					// Valid scancode?
-					if (keyCode >= InputMap::kMaxMacros)
-						continue;
+				// Valid scancode?
+				if (keyCode >= InputMap::kMaxMacros)
+					continue;
 
-					float timer = t->timer;
-					bool isDown = t->flags != 0 && timer == 0.0;
-					bool isUp = t->flags == 0 && timer != 0;
+				float timer = t->timer;
+				bool isDown = t->flags != 0 && timer == 0.0;
+				bool isUp = t->flags == 0 && timer != 0;
 
-					if (isDown) {
-						if (forceKeyCombination != -1 && keyCode == forceKeyCombination) {
-							keyComboPressed = true;
-						}
-						if (console && console->view) {
-							if (keyCode == paKey || keyCode == altKey) {
-								bool succ = false;
-								//Case 1 : Left weapon equipped, none on the right
-								//Case 2 : Dual wield + Fist(nothing held, no magic)
-								//Case 3 : Right hand equipped + possibly shield, Two handed
-								if (wepL && !wepR && (!magicR || (onlyDuringAttacks && isAttacking))) {
-									LeftHandPowerAttack();
-								}
-								else if (((wepL && wepR) || (!wepL && !wepR && !magicL && !magicR)) && (!onlyDuringAttacks || (onlyDuringAttacks && isAttacking))) {
-									DualWieldPowerAttack();
-								}
-								else if ((!onlyDuringAttacks && !magicL && !magicR) || (onlyDuringAttacks && isAttacking)) {
-									RightHandPowerAttack();
-								}
-							}
-							if (keyComboPressed) {
-								if (keyCode == forceLeftKey) {
-									LeftHandPowerAttack();
-								}
-								if (keyCode == forceDualKey) {
-									DualWieldPowerAttack();
-								}
-								if (keyCode == forceRightKey) {
-									RightHandPowerAttack();
-								}
-							}
-						}
+				if (isDown) {
+					if (onlyDuringAttacks && keyCode == modifierKey) {
+						keyComboPressed = true;
 					}
-					else if (isUp) {
-						if (forceKeyCombination != -1 && keyCode == forceKeyCombination) {
-							keyComboPressed = false;
+
+				if (console && console->view)
+				{
+						if (keyCode == paKey && (!onlyDuringAttacks || (onlyDuringAttacks && (isAttacking || keyComboPressed)))) {
+							PowerAttack();
 						}
 					}
 				}
-				break;
+
+				else if (isUp) {
+					if (onlyDuringAttacks && keyCode == modifierKey) {
+						keyComboPressed = false;
+					}
+				}
+			}
+			break;
 			}
 		}
 
@@ -391,36 +325,23 @@ void LoadConfigs() {
 	_MESSAGE("Loading configs");
 	ini.LoadFile("Data\\SKSE\\Plugins\\OneClickPowerAttack.ini");
 	paKey = std::stoi(ini.GetValue("General", "Keycode", "257"));
-	altKey = std::stoi(ini.GetValue("General", "AltKey", "34"));
-	forceKeyCombination = std::stoi(ini.GetValue("General", "ForceKeyCombination", "-1"));
-	forceRightKey = std::stoi(ini.GetValue("General", "ForceRightKey", "999"));
-	forceDualKey = std::stoi(ini.GetValue("General", "ForceDualKey", "999"));
-	forceLeftKey = std::stoi(ini.GetValue("General", "ForceLeftKey", "999"));
+	modifierKey = std::stoi(ini.GetValue("General", "ModifierKey", "-1"));
 	onlyDuringAttacks = std::stoi(ini.GetValue("General", "OnlyDuringAttack", "0")) > 0;
-	skysaCompatibility = std::stoi(ini.GetValue("General", "SkySACompatibility", "0")) > 0;
-	rightHand = ini.GetValue("General", "Right", "player.pa ActionRightPowerAttack");
-	leftHand = ini.GetValue("General", "Left", "player.pa ActionLeftPowerAttack");
-	dualWield = ini.GetValue("General", "Dual", "player.pa ActionDualPowerAttack");
+	disableLongPress = std::stoi(ini.GetValue("General", "DisableLongPress", "0"));
 	ini.Reset();
 	_MESSAGE("Keycode %d", paKey);
 	_MESSAGE("Done");
 
 	isAttacking = false;
-	if (forceKeyCombination != -1) {
-		keyComboPressed = false;
-	}
-	else {
-		keyComboPressed = true;
-	}
+	keyComboPressed = false;
 }
 
 class MenuWatcher : public BSTEventSink<MenuOpenCloseEvent> {
 	virtual EventResult	ReceiveEvent(MenuOpenCloseEvent* evn, EventDispatcher<MenuOpenCloseEvent>* dispatcher) override {
 		if (!console) {
 			console = MenuManager::GetSingleton()->GetMenu(&BSFixedString("Console"));
-			if(console)
+			if (console)
 				_MESSAGE("Console %llx", console);
-			//MenuManager::GetSingleton()->MenuOpenCloseEventDispatcher()->RemoveEventSink(this);
 		}
 		if (evn->menuName == UIStringHolder::GetSingleton()->loadingMenu && evn->opening) {
 			LoadConfigs();
@@ -479,7 +400,7 @@ extern "C" {
 					_MESSAGE("Failed to register inputEventHandler");
 				}
 			}
-		});
+			});
 		return true;
 	}
 };
