@@ -27,7 +27,7 @@ UInt32 blockKey = 257;
 int paKey = 257;
 int modifierKey = -1;
 bool keyComboPressed = false;
-bool onlyDuringAttacks = false;
+bool onlyFirstAttack = false;
 int longPressMode = 2;
 float repeatTimer = 0;
 bool isAttacking = false;
@@ -53,7 +53,7 @@ class HookAttackBlockHandler {
 public:
 	typedef void (HookAttackBlockHandler::* FnProcessButton) (ButtonEvent*, void*);
 	void ProcessButton(ButtonEvent* a_event, void* a_data) {
-		if (onlyDuringAttacks || isAttacking ) {
+		if (isAttacking || keyComboPressed) {
 			UInt32	deviceType = a_event->deviceType;
 			UInt32	keyMask = a_event->keyMask;
 			UInt32 keyCode;
@@ -76,9 +76,8 @@ public:
 			bool isHeld = a_event->flags != 0 && timer > 0.55;
 
 			if (keyCode == attackKey && isHeld && longPressMode > 0) return;
-
-			if (keyCode == paKey && paKey == blockKey && isDown && (keyComboPressed || isAttacking)) return;
-			if (keyCode == paKey && paKey == attackKey && keyComboPressed) 	return;
+			if (keyCode == paKey && paKey != attackKey && isDown && (onlyFirstAttack && isAttacking)) return;
+			if (keyCode == paKey && isDown && keyComboPressed) 	return;
 		}
 		FnProcessButton fn = fnHash.at(*(UInt64*)this);
 		if (fn)
@@ -261,7 +260,7 @@ public:
 					if (keyCode == modifierKey && isDown)	keyComboPressed = true;
 					if (keyCode == modifierKey && isUp) keyComboPressed = false;
 					if (keyCode == paKey && isDown) {
-						if ((paKey == attackKey && keyComboPressed) || (paKey == blockKey && (!onlyDuringAttacks || (onlyDuringAttacks && (isAttacking || keyComboPressed)))) || (paKey != attackKey && paKey != blockKey)){
+						if ((paKey == attackKey && keyComboPressed) || (paKey != attackKey && (modifierKey <= 0 || ((!onlyFirstAttack && keyComboPressed) || (onlyFirstAttack && (isAttacking|| keyComboPressed)))))) {
 							PowerAttack();
 						}
 					}
@@ -288,37 +287,25 @@ void LoadConfigs() {
 	paKey = std::stoi(ini.GetValue("General", "Keycode", "257"));
 	modifierKey = std::stoi(ini.GetValue("General", "ModifierKey", "-1"));
 	longPressMode = std::stoi(ini.GetValue("General", "LongPressMode", "0"));
+	onlyFirstAttack = std::stoi(ini.GetValue("General", "SkipModifierDuringCombo", "0")) > 0;
 	ini.Reset();
 	_MESSAGE("Keycode %d", paKey);
 	_MESSAGE("Done");
 	InputManager* im = InputManager::GetSingleton();
 	InputStringHolder* inputString = InputStringHolder::GetSingleton();
 	
-	// Keyboard
-	//if (paKey <= 255){
-	//	attackKey = im->GetMappedKey(inputString->InputStringHolder::rightAttack, kDeviceType_Keyboard, 0);
-	//	blockKey = im->GetMappedKey(inputString->InputStringHolder::leftAttack, kDeviceType_Keyboard, 0);
-	//}
 	// Gamepad
 	if (paKey >= 266) {
 		attackKey = InputMap::GamepadMaskToKeycode(im->GetMappedKey(inputString->InputStringHolder::rightAttack, kDeviceType_Gamepad, 0));
-		blockKey = InputMap::GamepadMaskToKeycode(im->GetMappedKey(inputString->InputStringHolder::leftAttack, kDeviceType_Gamepad, 0));
+		//blockKey = InputMap::GamepadMaskToKeycode(im->GetMappedKey(inputString->InputStringHolder::leftAttack, kDeviceType_Gamepad, 0));
 		_MESSAGE("Controller");
-		std::string tmp = std::to_string(attackKey);
-		char const* atk = tmp.c_str();
-		_MESSAGE(atk);
 	}
 	//Mouse
 	else {
 		attackKey = InputMap::kMacro_MouseButtonOffset + (im->GetMappedKey(inputString->InputStringHolder::rightAttack, kDeviceType_Mouse, 0));
-		blockKey = InputMap::kMacro_MouseButtonOffset + (im->GetMappedKey(inputString->InputStringHolder::leftAttack, kDeviceType_Mouse, 0));
+		//blockKey = InputMap::kMacro_MouseButtonOffset + (im->GetMappedKey(inputString->InputStringHolder::leftAttack, kDeviceType_Mouse, 0));
 		_MESSAGE("Mouse");
-		std::string tmp = std::to_string(attackKey);
-		char const* atk = tmp.c_str();
-		_MESSAGE(atk);
 	}
-	if (paKey == attackKey || paKey == blockKey)
-		onlyDuringAttacks = true;
 }
 
 class MenuWatcher : public BSTEventSink<MenuOpenCloseEvent> {
