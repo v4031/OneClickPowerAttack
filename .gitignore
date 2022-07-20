@@ -24,3 +24,5 @@ x64/Release/vcpkg.applocal.log
 .vs/OneClickPowerAttack/v17/.suo
 .vs/OneClickPowerAttack/FileContentIndex/read.lock
 .vs/OneClickPowerAttack/FileContentIndex/936cba00-6445-4d4e-a3ac-1153240e7b0c.vsidx
+x64/Release/OneClickPowerAttack.Build.CppClean.log
+x64/Release/OneClickPowerAttack.vcxproj.FileListAbsolute.txt
