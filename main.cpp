@@ -9,6 +9,10 @@
 #include <unordered_map>
 #include "ImmersiveImpact/INILibrary/SimpleIni.h"
 #include "ImmersiveImpact/Utils.h"
+#include <iostream>
+#include <chrono>
+#include <thread>
+using namespace std;
 
 IDebugLog	gLog;
 const char* logPath = "\\My Games\\Skyrim Special Edition\\SKSE\\OneClickPowerAttack.log";
@@ -29,10 +33,13 @@ int modifierKey = -1;
 bool keyComboPressed = false;
 bool onlyFirstAttack = false;
 int longPressMode = 2;
-float repeatTimer = 0;
 bool isAttacking = false;
+bool isJumping = false;
+bool isBlocking = false;
+bool isBow = false;
+bool attackWindow = false;
 std::string powerAttack = "player.pa ActionRightPowerAttack";
-std::string repeat = "player.pa ActionRightAttack";
+std::string lightAttack = "player.pa ActionRightAttack";
 
 /*RelocAddr<uintptr_t> AttackStopHandler_vtable(0x1671F30);
 RelocAddr<uintptr_t> AttackWinStartHandler_vtable(0x1671F00);
@@ -53,7 +60,7 @@ class HookAttackBlockHandler {
 public:
 	typedef void (HookAttackBlockHandler::* FnProcessButton) (ButtonEvent*, void*);
 	void ProcessButton(ButtonEvent* a_event, void* a_data) {
-		if (isAttacking || keyComboPressed) {
+		if (isAttacking || keyComboPressed || (!isBow && longPressMode >0)) {
 			UInt32	deviceType = a_event->deviceType;
 			UInt32	keyMask = a_event->keyMask;
 			UInt32 keyCode;
@@ -73,11 +80,10 @@ public:
 
 			float timer = a_event->timer;
 			bool isDown = a_event->flags != 0 && timer == 0.0;
-			bool isHeld = a_event->flags != 0 && timer > 0.55;
+			bool isHeld = a_event->flags != 0 && timer > 0.5;
 
 			if (keyCode == attackKey && isHeld && longPressMode > 0) return;
-			if (keyCode == paKey && paKey != attackKey && isDown && (onlyFirstAttack && isAttacking)) return;
-			if (keyCode == paKey && isDown && keyComboPressed) 	return;
+			if (keyCode == paKey && isDown && keyComboPressed) return;
 		}
 		FnProcessButton fn = fnHash.at(*(UInt64*)this);
 		if (fn)
@@ -106,17 +112,28 @@ public:
 		Actor* a = *(Actor**)((uintptr_t)evn + 0x8);
 		if (a) {
 			if (!IsRidingHorse(a) && !IsInKillmove(a)) {
-				int meleeState = (a->actorState.flags04 >> 28 & 31);
-				if (meleeState >= 1 && meleeState <= 5) {
+				int currentState = (a->actorState.flags04 >> 28 & 31);
+				if (currentState >= 1 && currentState <= 5) {
 					isAttacking = true;
 				}
-				else if (meleeState < 1 || meleeState > 5) {
+				else if (currentState >= 9 && currentState <= 13) {
+					isBow = true;
+				}
+				else {
 					isAttacking = false;
+					isBow = false;
 				}
 			}
 			else {
 				isAttacking = false;
+				isBow = false;
 			}
+			if (evn->eventname == (BSFixedString)"JumpUp" || evn->eventname == (BSFixedString)"JumpFall") isJumping = true;
+			if (evn->eventname == (BSFixedString)"JumpLandEnd") isJumping = false;
+			if (evn->eventname == (BSFixedString)"blockStartOut") isBlocking = true;
+			if (evn->eventname == (BSFixedString)"blockStop") isBlocking = false;
+			if (evn->eventname == (BSFixedString)"MCO_WinOpen") attackWindow = true;
+			if (evn->eventname == (BSFixedString)"MCO_WinClose") attackWindow = false;
 		}
 		FnReceiveEvent fn = fnHash.at(*(UInt64*)this);
 		return fn ? (this->*fn)(evn, src) : kEvent_Continue;
@@ -144,12 +161,23 @@ void SendConsoleCommand(std::string s) {
 	console->view->Invoke("gfx.io.GameDelegate.call", &res, args.data(), args.size());
 }
 
-void PowerAttack() {
+//For Jumping Attack/Vanguard
+void AltPowerAttack()
+{
+	this_thread::sleep_for(chrono::milliseconds(200));
 	SendConsoleCommand(powerAttack);
+}
+void PowerAttack() {
+	if (isJumping|| isBlocking) {
+		SendConsoleCommand(lightAttack);
+		std::thread thread(AltPowerAttack);
+		thread.detach();
+	}
+	else SendConsoleCommand(powerAttack);
 }
 
 void RepeatAttack() {
-	SendConsoleCommand(repeat);
+	SendConsoleCommand(lightAttack);
 }
 enum USER_EVENT_FLAG {
 	kNone = 0,
@@ -253,30 +281,28 @@ public:
 
 				float timer = t->timer;
 				bool isDown = t->flags != 0 && timer == 0.0;
+				bool isHeld = t->flags != 0 && timer > 0.0;
 				bool isUp = t->flags == 0 && timer != 0;
-				bool scuffedRepeat = t->flags != 0 && t->timer - repeatTimer > 0.5;
 
 				if (console && console->view) {
-					if (keyCode == modifierKey && isDown)	keyComboPressed = true;
+					if (keyCode == modifierKey && isDown) keyComboPressed = true;
 					if (keyCode == modifierKey && isUp) keyComboPressed = false;
 					if (keyCode == paKey && isDown) {
-						if ((paKey == attackKey && keyComboPressed) || (paKey != attackKey && (modifierKey <= 0 || ((!onlyFirstAttack && keyComboPressed) || (onlyFirstAttack && (isAttacking|| keyComboPressed)))))) {
+						if (paKey == attackKey && keyComboPressed || (paKey != attackKey && (modifierKey <= 0 || (onlyFirstAttack && isAttacking) || keyComboPressed)))
+						{
 							PowerAttack();
 						}
 					}
 					if (longPressMode == 2){
-						if (keyCode == attackKey && isAttacking && scuffedRepeat) {
+						if (keyCode == attackKey && isHeld && attackWindow) {
 							keyComboPressed ? PowerAttack() : RepeatAttack();
-							repeatTimer = t->timer;
 						}
-						if (keyCode == attackKey && isUp) repeatTimer = 0;
 					}
 				}
 			}
 			break;
 			}
 		}
-
 		return kEvent_Continue;
 	}
 };
